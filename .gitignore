@@ -13,8 +13,11 @@ build/
 dist/
 *.egg-info/
 
-# Virtual environments
+# Virtual environments & API credentials
 .env
+*.env
+.api_config.json
+*.key
 .venv
 env/
 venv/
