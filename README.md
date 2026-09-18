@@ -145,6 +145,15 @@ Semua jawaban akan otomatis tersimpan rapi ke dalam `knowledge_dataset.txt` yang
 
 ---
 
+## 👥 Kontributor & Kredit
+
+Proyek ini digagas dan diarahkan oleh **[Rzy (@Iky969)](https://github.com/Iky969)**, serta dikembangkan secara kolaboratif melalui bantuan model AI terdepan (**Anthropic Claude 3.5 Sonnet / Opus** dan **Google DeepMind Antigravity / Gemini**).
+
+Catatan lengkap mengenai peran, rincian teknis, dan riwayat kontribusi setiap pihak didokumentasikan di **[CONTRIBUTORS.md](CONTRIBUTORS.md)**.
+
+---
+
 ## 📄 Lisensi
 
 Proyek ini dilisensikan di bawah [Lisensi MIT](LICENSE). Bebas digunakan, dimodifikasi, dan didistribusikan untuk keperluan pembelajaran, riset, maupun komersial.
+
