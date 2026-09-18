@@ -312,21 +312,57 @@ class TransformerBlock(nn.Module):
         return x
 
 
+MODEL_PRESETS: Dict[str, Dict[str, Union[int, str]]] = {
+    "25m": {
+        "d_model": 512,
+        "nhead": 8,
+        "num_layers": 8,
+        "dim_feedforward": 2048,
+        "max_seq_len": 512,
+        "description": "25.5M parameter (Ringan & Cepat, hemat komputasi)",
+    },
+    "50m": {
+        "d_model": 640,
+        "nhead": 10,
+        "num_layers": 10,
+        "dim_feedforward": 2560,
+        "max_seq_len": 512,
+        "description": "49.6M parameter (~50M, kapasitas memori 2x lipat)",
+    },
+    "85m": {
+        "d_model": 768,
+        "nhead": 12,
+        "num_layers": 12,
+        "dim_feedforward": 3072,
+        "max_seq_len": 512,
+        "description": "85.5M parameter (~85M, arsitektur standar GPT-2 depth & width)",
+    },
+    "128m": {
+        "d_model": 768,
+        "nhead": 12,
+        "num_layers": 18,
+        "dim_feedforward": 3072,
+        "max_seq_len": 1024,
+        "description": "128.4M parameter (~128M, kapasitas skala penuh GPT-2 Small)",
+    },
+}
+
+
 class LLMLite(nn.Module):
     """
     Decoder-Only Transformer Language Model (GPT-style).
-    Parameter default: d_model=512, nhead=8, num_layers=8, dim_feedforward=2048.
+    Parameter default: 128M (d_model=768, nhead=12, num_layers=18, dim_feedforward=3072, max_seq_len=1024).
     Target utama GPU (CUDA/MPS), CPU sebagai fallback.
     """
 
     def __init__(
         self,
         vocab_size: int,
-        d_model: int = 512,
-        nhead: int = 8,
-        num_layers: int = 8,
-        dim_feedforward: int = 2048,
-        max_seq_len: int = 512,
+        d_model: int = 768,
+        nhead: int = 12,
+        num_layers: int = 18,
+        dim_feedforward: int = 3072,
+        max_seq_len: int = 1024,
         dropout: float = 0.1,
     ) -> None:
         super().__init__()
@@ -590,6 +626,7 @@ def train_model(
     grad_accum_steps: int = 1,
     warmup_epochs: int = 5,
     use_amp: bool = True,
+    checkpoint_path: str = CHECKPOINT_PATH,
 ) -> None:
     """
     Loop pelatihan utama dengan:
@@ -711,7 +748,7 @@ def train_model(
             # Simpan checkpoint jika val_loss membaik
             if avg_val_loss < best_val_loss:
                 best_val_loss = avg_val_loss
-                save_checkpoint(model, optimizer, epoch, best_val_loss, scaler=scaler)
+                save_checkpoint(model, optimizer, epoch, best_val_loss, path=checkpoint_path, scaler=scaler)
 
     print("=" * 60)
     print("  PELATIHAN SELESAI!")
@@ -844,7 +881,7 @@ def run_interactive(
     tanpa perlu memuat ulang model dari disk di setiap pergantian prompt.
     """
     optimizer = optim.AdamW(model.parameters())
-    loaded_epoch = load_checkpoint(model, optimizer, path=CHECKPOINT_PATH, device=device)
+    loaded_epoch = load_checkpoint(model, optimizer, path=args.checkpoint, device=device)
     if loaded_epoch == 0:
         print("[!] Berjalan dalam mode interaktif tanpa checkpoint terlatih.")
 
@@ -1066,6 +1103,51 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Jalankan mode interaktif (REPL) untuk generasi teks berulang tanpa reload model.",
     )
+    parser.add_argument(
+        "--size",
+        "--preset",
+        dest="model_size",
+        type=str,
+        default="128m",
+        choices=["25m", "50m", "85m", "128m"],
+        help="Preset ukuran arsitektur model: 25m, 50m, 85m, 128m (default: 128m).",
+    )
+    parser.add_argument(
+        "--d_model",
+        type=int,
+        default=None,
+        help="Override dimensi embedding / hidden size (d_model).",
+    )
+    parser.add_argument(
+        "--nhead",
+        type=int,
+        default=None,
+        help="Override jumlah attention heads.",
+    )
+    parser.add_argument(
+        "--num_layers",
+        type=int,
+        default=None,
+        help="Override jumlah transformer block layers.",
+    )
+    parser.add_argument(
+        "--dim_feedforward",
+        type=int,
+        default=None,
+        help="Override dimensi lapisan tersembunyi Feed-Forward Network.",
+    )
+    parser.add_argument(
+        "--max_seq_len",
+        type=int,
+        default=None,
+        help="Override panjang sekuens maksimal token.",
+    )
+    parser.add_argument(
+        "--checkpoint",
+        type=str,
+        default=CHECKPOINT_PATH,
+        help=f"Path ke file checkpoint (default: '{CHECKPOINT_PATH}').",
+    )
     return parser
 
 
@@ -1085,7 +1167,7 @@ def run_generate(
 ) -> None:
     """Memuat checkpoint dan membangkitkan teks."""
     optimizer = optim.AdamW(model.parameters())
-    loaded_epoch = load_checkpoint(model, optimizer, path=CHECKPOINT_PATH, device=device)
+    loaded_epoch = load_checkpoint(model, optimizer, path=args.checkpoint, device=device)
 
     if loaded_epoch == 0:
         print("[!] Tidak ada checkpoint valid. Bangkitkan teks dari model tanpa pelatihan.")
@@ -1135,17 +1217,26 @@ def main() -> None:
 
     print_vocab_info(tokenizer=tokenizer, text_len=len(dataset_text))
 
+    # 2. Konfigurasi Arsitektur Model (Preset + Override)
+    preset_cfg = MODEL_PRESETS[args.model_size]
+    d_model = args.d_model if args.d_model is not None else preset_cfg["d_model"]
+    nhead = args.nhead if args.nhead is not None else preset_cfg["nhead"]
+    num_layers = args.num_layers if args.num_layers is not None else preset_cfg["num_layers"]
+    dim_feedforward = args.dim_feedforward if args.dim_feedforward is not None else preset_cfg["dim_feedforward"]
+    max_seq_len = args.max_seq_len if args.max_seq_len is not None else preset_cfg["max_seq_len"]
+
     # Inisialisasi model (target GPU, CPU sebagai fallback)
     model = LLMLite(
         vocab_size=tokenizer.vocab_size,
-        d_model=512,
-        nhead=8,
-        num_layers=8,
-        dim_feedforward=2048,
-        max_seq_len=512,
+        d_model=d_model,
+        nhead=nhead,
+        num_layers=num_layers,
+        dim_feedforward=dim_feedforward,
+        max_seq_len=max_seq_len,
         dropout=0.1,
     )
 
+    print(f"  Preset Model Aktif: {args.model_size.upper()} ({preset_cfg['description']})")
     print_model_summary(model)
 
     # --- Smoke Test ---
@@ -1154,7 +1245,7 @@ def main() -> None:
         print("  🔥 SMOKE TEST — Generate 1 sampel kalimat pendek")
         print("=" * 60)
         optimizer = optim.AdamW(model.parameters())
-        load_checkpoint(model, optimizer, path=CHECKPOINT_PATH, device=device)
+        load_checkpoint(model, optimizer, path=args.checkpoint, device=device)
         hasil = generate_text(
             model,
             start_text=args.prompt,
@@ -1201,6 +1292,7 @@ def main() -> None:
             grad_accum_steps=args.grad_accum_steps,
             warmup_epochs=args.warmup_epochs,
             use_amp=args.amp,
+            checkpoint_path=args.checkpoint,
         )
 
     # --- Generate ---
@@ -1228,6 +1320,7 @@ def main() -> None:
             grad_accum_steps=args.grad_accum_steps,
             warmup_epochs=args.warmup_epochs,
             use_amp=args.amp,
+            checkpoint_path=args.checkpoint,
         )
 
         run_generate(model, args, device, tokenizer=tokenizer)
